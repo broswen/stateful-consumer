@@ -1,0 +1,43 @@
+version: "3.9"
+services:
+  consumer:
+    deploy:
+      mode: replicated
+      replicas: 3
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - broker
+      - redis
+    command: sh -c "
+      sleep 4 &&
+      ./bin/consumer"
+    environment:
+      BROKERS: broker:9092
+      REDIS: redis:6379
+      TOPICS: counters
+  broker:
+    container_name: broker
+    hostname: broker
+    image: bitnami/kafka:latest
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+       KAFKA_BROKER_ID: "1"
+       KAFKA_ENABLE_KRAFT: "yes"
+       KAFKA_CFG_PROCESS_ROLES: broker,controller
+       ALLOW_PLAINTEXT_LISTENER: "yes"
+       KAFKA_CFG_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://:9093,EXTERNAL://:9094
+       KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://broker:9092,EXTERNAL://localhost:9094
+       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@127.0.0.1:9093
+       KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+       KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+       BITNAMI_DEBUG: true
+  redis:
+    container_name: redis
+    hostname: redis
+    image: redis:7.0.7
+    ports:
+      -  "6379:6379"
