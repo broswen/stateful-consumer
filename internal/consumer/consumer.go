@@ -6,6 +6,7 @@ import (
 	log2 "log"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -18,7 +19,7 @@ type Payload struct {
 	Value int64  `json:"value"`
 }
 
-func NewConsumer(redis *redis.Client, id, group, topics, brokers string) (*Consumer, error) {
+func NewConsumer(redis *redis.Client, id, group, topic, brokers string) (*Consumer, error) {
 	config := sarama.NewConfig()
 	config.ClientID = id
 	version, err := sarama.ParseKafkaVersion("3.1.0")
@@ -38,28 +39,27 @@ func NewConsumer(redis *redis.Client, id, group, topics, brokers string) (*Consu
 	c := &Consumer{
 		id:       id,
 		group:    group,
-		topics:   topics,
+		topic:    topic,
 		brokers:  brokers,
 		client:   client,
 		redis:    redis,
 		counters: map[string]int64{},
 		seen:     map[string]int32{},
-		ready:    make(chan interface{}),
 	}
 	return c, nil
 }
 
 type Consumer struct {
+	sync.Mutex
 	id      string
 	group   string
-	topics  string
+	topic   string
 	brokers string
 	client  sarama.ConsumerGroup
 	cancel  context.CancelFunc
 	redis   *redis.Client
 	// counters is the in memory state for each counter
 	counters map[string]int64
-	ready    chan interface{}
 	// seen is the last partition we saw a specific counter at, used to clean up in memory state after a rebalance
 	seen map[string]int32
 }
@@ -71,19 +71,14 @@ func (c *Consumer) Close() error {
 	return nil
 }
 
-func (c *Consumer) Consume() error {
-	// wait for ready
-	ctx, cancel := context.WithCancel(context.Background())
-	c.cancel = cancel
+func (c *Consumer) Consume(ctx context.Context) error {
 	for {
-		if err := c.client.Consume(ctx, strings.Split(c.topics, ","), c); err != nil {
+		if err := c.client.Consume(ctx, []string{c.topic}, c); err != nil {
 			log.Panic().Err(err)
 		}
 		if err := ctx.Err(); err != nil {
-			log.Error().Err(err).Msg("")
-			return err
+			return nil
 		}
-		c.ready = make(chan interface{})
 	}
 }
 
@@ -123,6 +118,7 @@ func (c *Consumer) Handle(message *sarama.ConsumerMessage) error {
 		return nil
 	}
 
+	c.Lock()
 	c.seen[payload.ID] = message.Partition
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -141,6 +137,7 @@ func (c *Consumer) Handle(message *sarama.ConsumerMessage) error {
 		current = value
 	}
 	c.counters[payload.ID] = current + payload.Value
+	c.Unlock()
 
 	if err := c.redis.Set(ctx, payload.ID, c.counters[payload.ID], 0).Err(); err != nil {
 		log.Warn().Str("id", payload.ID).Int64("value", c.counters[payload.ID]).Msg("unable to set counter value in redis")
@@ -149,14 +146,12 @@ func (c *Consumer) Handle(message *sarama.ConsumerMessage) error {
 }
 
 func (c *Consumer) Setup(session sarama.ConsumerGroupSession) error {
-	topic := strings.Split(c.topics, ",")[0]
-	log.Info().Ints32(topic, session.Claims()[topic]).Msg("claimed partitions")
+	log.Info().Ints32(c.topic, session.Claims()[c.topic]).Msg("claimed partitions")
 	parts := make(map[int32]bool)
-	for _, part := range session.Claims()[topic] {
+	for _, part := range session.Claims()[c.topic] {
 		parts[part] = true
 	}
 	c.CleanOtherPartitions(parts)
-	close(c.ready)
 	return nil
 }
 

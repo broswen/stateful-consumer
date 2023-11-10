@@ -16,7 +16,7 @@ services:
     environment:
       BROKERS: broker:9092
       REDIS: redis:6379
-      TOPICS: counters
+      TOPIC: counters
   broker:
     container_name: broker
     hostname: broker

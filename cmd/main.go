@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,9 +19,9 @@ func main() {
 	if brokers == "" {
 		log.Fatal().Msgf("kafka brokers are empty")
 	}
-	topics := os.Getenv("TOPICS")
-	if topics == "" {
-		log.Fatal().Msgf("request topics list is empty")
+	topic := os.Getenv("TOPIC")
+	if topic == "" {
+		log.Fatal().Msgf("request topic is empty")
 	}
 	redisHost := os.Getenv("REDIS")
 	if redisHost == "" {
@@ -34,16 +35,18 @@ func main() {
 		DB:       0,  // use default DB
 	})
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	eg := errgroup.Group{}
 
-	c, err := consumer.NewConsumer(rdb, "stateful-consumer", "stateful-consumer", topics, brokers)
+	c, err := consumer.NewConsumer(rdb, "stateful-consumer", "stateful-consumer", topic, brokers)
 	if err != nil {
 		log.Fatal().Err(err).Msg("unable to create consumer")
 	}
 
 	eg.Go(func() error {
-		if err := c.Consume(); err != nil {
-			log.Err(err).Msg("error starting kafka consumer")
+		if err := c.Consume(ctx); err != nil {
+			log.Err(err).Msg("error consuming from kafka")
 			return err
 		}
 		return nil
@@ -55,6 +58,7 @@ func main() {
 		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 		s := <-sigs
 		log.Debug().Str("signal", s.String()).Msg("received signal")
+		cancel()
 		if err := c.Close(); err != nil {
 			log.Error().Err(err).Msg("error closing kafka consumer")
 			return err
