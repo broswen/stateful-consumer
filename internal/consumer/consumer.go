@@ -31,49 +31,68 @@ func NewConsumer(redis *redis.Client, id, group, topic, brokers string) (*Consum
 
 	sarama.Logger = log2.New(os.Stdout, "[sarama] ", log2.LstdFlags)
 
-	client, err := sarama.NewConsumerGroup(strings.Split(brokers, ","), group, config)
+	client, err := sarama.NewClient(strings.Split(brokers, ","), config)
+	consumerGroup, err := sarama.NewConsumerGroupFromClient(group, client)
 	if err != nil {
 		return nil, err
 	}
 
 	c := &Consumer{
-		id:       id,
-		group:    group,
-		topic:    topic,
-		brokers:  brokers,
-		client:   client,
-		redis:    redis,
-		counters: map[string]int64{},
-		seen:     map[string]int32{},
+		id:            id,
+		group:         group,
+		topic:         topic,
+		brokers:       brokers,
+		client:        client,
+		consumerGroup: consumerGroup,
+		redis:         redis,
+		counters:      map[string]int64{},
+		seen:          map[string]int32{},
 	}
 	return c, nil
 }
 
 type Consumer struct {
 	sync.Mutex
-	id      string
-	group   string
-	topic   string
-	brokers string
-	client  sarama.ConsumerGroup
-	cancel  context.CancelFunc
-	redis   *redis.Client
+	id            string
+	group         string
+	topic         string
+	brokers       string
+	client        sarama.Client
+	consumerGroup sarama.ConsumerGroup
+	cancel        context.CancelFunc
+	redis         *redis.Client
 	// counters is the in memory state for each counter
 	counters map[string]int64
 	// seen is the last partition we saw a specific counter at, used to clean up in memory state after a rebalance
 	seen map[string]int32
 }
 
+func (c *Consumer) PartitionInfo() (map[string][]int32, error) {
+	topics, err := c.client.Topics()
+	if err != nil {
+		return nil, err
+	}
+	info := make(map[string][]int32)
+	for _, topic := range topics {
+		partitions, err := c.client.Partitions(topic)
+		if err != nil {
+			return nil, err
+		}
+		info[topic] = partitions
+	}
+	return info, nil
+}
+
 func (c *Consumer) Close() error {
 	if c.cancel != nil {
 		c.cancel()
 	}
-	return nil
+	return c.client.Close()
 }
 
 func (c *Consumer) Consume(ctx context.Context) error {
 	for {
-		if err := c.client.Consume(ctx, []string{c.topic}, c); err != nil {
+		if err := c.consumerGroup.Consume(ctx, []string{c.topic}, c); err != nil {
 			log.Panic().Err(err)
 		}
 		if err := ctx.Err(); err != nil {
