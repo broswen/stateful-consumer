@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"syscall"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
@@ -35,10 +34,12 @@ func main() {
 		DB:       0,  // use default DB
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
 
-	eg := errgroup.Group{}
+	eg, ctx := errgroup.WithContext(ctx)
 
+	// TODO pass in ctx here for internal use as well
 	c, err := consumer.NewConsumer(rdb, "stateful-consumer", "stateful-consumer", topic, brokers)
 	if err != nil {
 		log.Fatal().Err(err).Msg("unable to create consumer")
@@ -49,20 +50,7 @@ func main() {
 			log.Err(err).Msg("error consuming from kafka")
 			return err
 		}
-		return nil
-	})
-	defer c.Close()
-
-	eg.Go(func() error {
-		sigs := make(chan os.Signal, 1)
-		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
-		s := <-sigs
-		log.Debug().Str("signal", s.String()).Msg("received signal")
-		cancel()
-		if err := c.Close(); err != nil {
-			log.Error().Err(err).Msg("error closing kafka consumer")
-			return err
-		}
+		log.Info().Msg("consumer completed")
 		return nil
 	})
 

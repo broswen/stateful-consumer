@@ -1,9 +1,6 @@
 version: "3.9"
 services:
-  consumer:
-    deploy:
-      mode: replicated
-      replicas: 3
+  consumer-0:
     build:
       context: .
       dockerfile: Dockerfile
@@ -11,9 +8,25 @@ services:
       - broker
       - redis
     command: sh -c "
-      sleep 4 &&
+      sleep 5 &&
       ./bin/consumer"
     environment:
+      INSTANCE_ID: consumer-0
+      BROKERS: broker:9092
+      REDIS: redis:6379
+      TOPIC: counters
+  consumer-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - broker
+      - redis
+    command: sh -c "
+      sleep 5 &&
+      ./bin/consumer"
+    environment:
+      INSTANCE_ID: consumer-1
       BROKERS: broker:9092
       REDIS: redis:6379
       TOPIC: counters
@@ -25,6 +38,7 @@ services:
       - "9092:9092"
       - "9094:9094"
     environment:
+       KAFKA_CFG_NODE_ID: "1"
        KAFKA_BROKER_ID: "1"
        KAFKA_ENABLE_KRAFT: "yes"
        KAFKA_CFG_PROCESS_ROLES: broker,controller

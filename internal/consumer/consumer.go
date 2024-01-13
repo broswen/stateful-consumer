@@ -28,12 +28,21 @@ func NewConsumer(redis *redis.Client, id, group, topic, brokers string) (*Consum
 	}
 	config.Version = version
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategySticky()}
-
+	instanceId := os.Getenv("INSTANCE_ID")
+	if instanceId != "" {
+		log.Info().Str("instance_id", instanceId).Msg("set consumer group static instance id")
+		config.Consumer.Group.InstanceId = instanceId
+	}
 	sarama.Logger = log2.New(os.Stdout, "[sarama] ", log2.LstdFlags)
 
 	client, err := sarama.NewClient(strings.Split(brokers, ","), config)
+	if err != nil {
+		log.Error().Err(err).Msg("unable to create sarama client")
+		return nil, err
+	}
 	consumerGroup, err := sarama.NewConsumerGroupFromClient(group, client)
 	if err != nil {
+		log.Error().Err(err).Msg("unable to create sarama consumer group from client")
 		return nil, err
 	}
 
@@ -86,6 +95,9 @@ func (c *Consumer) PartitionInfo() (map[string][]int32, error) {
 func (c *Consumer) Close() error {
 	if c.cancel != nil {
 		c.cancel()
+	}
+	if err := c.consumerGroup.Close(); err != nil {
+		return err
 	}
 	return c.client.Close()
 }
@@ -193,6 +205,7 @@ func (c *Consumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim saram
 			}
 			session.MarkMessage(message, "")
 		case <-session.Context().Done():
+			log.Info().Msg("context done, stopping consume claim")
 			return nil
 		}
 	}
