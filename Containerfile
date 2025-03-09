@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS build
+FROM docker.io/library/golang:1.21-alpine AS build
 # add gcc tools
 RUN apk add build-base
 # run build process in /app directory
@@ -12,7 +12,7 @@ COPY ./internal ./internal
 # build the binary
 RUN GOOS=linux CGO_ENABLED=1 GOARCH=amd64 go build -o consumer ./cmd/main.go
 
-FROM alpine
+FROM docker.io/library/alpine
 # copy the binary from build stage
 COPY --from=build /app/consumer /bin/consumer
 # use non root
